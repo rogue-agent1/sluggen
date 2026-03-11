@@ -1,130 +1,70 @@
 #!/usr/bin/env python3
-"""slugify - Convert text to URL-safe slugs and identifiers.
+"""slugify - URL slug generator from text strings.
 
-One file. Zero deps. Cleans text.
-
-Usage:
-  slugify.py "Hello, World!"             → hello-world
-  slugify.py "Hello, World!" --snake     → hello_world
-  slugify.py "Hello, World!" --camel     → helloWorld
-  slugify.py "Hello, World!" --pascal    → HelloWorld
-  slugify.py "Hello, World!" --const     → HELLO_WORLD
-  slugify.py "My Document.pdf" --file    → my-document.pdf
-  echo -e "line one\\nline two" | slugify.py --batch
+Single-file, zero-dependency CLI.
 """
 
+import sys
 import argparse
 import re
-import sys
 import unicodedata
 
 
-TRANSLITERATIONS = {
-    'ä': 'ae', 'ö': 'oe', 'ü': 'ue', 'ß': 'ss',
-    'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'å': 'a',
-    'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e',
-    'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i',
-    'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o',
-    'ù': 'u', 'ú': 'u', 'û': 'u',
-    'ñ': 'n', 'ç': 'c', 'ð': 'd', 'ø': 'o', 'þ': 'th',
-    'æ': 'ae', 'œ': 'oe', 'ł': 'l', 'đ': 'd',
-}
-
-
-def transliterate(text: str) -> str:
-    result = []
-    for ch in text:
-        if ch.lower() in TRANSLITERATIONS:
-            repl = TRANSLITERATIONS[ch.lower()]
-            result.append(repl.upper() if ch.isupper() else repl)
-        else:
-            # NFD decomposition strips accents
-            decomposed = unicodedata.normalize('NFD', ch)
-            result.append(''.join(c for c in decomposed if unicodedata.category(c) != 'Mn'))
-    return ''.join(result)
-
-
-def to_slug(text: str, separator: str = '-', max_len: int = 0) -> str:
-    text = transliterate(text)
-    text = text.lower()
+def slugify(text, separator="-", lowercase=True, max_length=0, transliterate=True):
+    if transliterate:
+        text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    if lowercase:
+        text = text.lower()
     text = re.sub(r'[^\w\s-]', '', text)
-    text = re.sub(r'[\s_-]+', separator, text)
-    text = text.strip(separator)
-    if max_len and len(text) > max_len:
-        text = text[:max_len].rstrip(separator)
+    text = re.sub(r'[\s_]+', separator, text).strip(separator)
+    text = re.sub(f'{re.escape(separator)}+', separator, text)
+    if max_length:
+        text = text[:max_length].rstrip(separator)
     return text
 
 
-def to_snake(text: str) -> str:
-    return to_slug(text, separator='_')
+def cmd_convert(args):
+    text = " ".join(args.text)
+    result = slugify(text, args.separator, not args.keep_case, args.max_length)
+    print(result)
 
 
-def to_camel(text: str) -> str:
-    slug = to_slug(text)
-    parts = slug.split('-')
-    return parts[0] + ''.join(p.capitalize() for p in parts[1:])
+def cmd_batch(args):
+    for line in sys.stdin:
+        line = line.strip()
+        if line:
+            print(slugify(line, args.separator))
 
 
-def to_pascal(text: str) -> str:
-    slug = to_slug(text)
-    return ''.join(p.capitalize() for p in slug.split('-'))
-
-
-def to_const(text: str) -> str:
-    return to_snake(text).upper()
-
-
-def to_filename(text: str) -> str:
-    # Preserve extension
-    parts = text.rsplit('.', 1)
-    if len(parts) == 2 and len(parts[1]) <= 5:
-        return to_slug(parts[0]) + '.' + parts[1].lower()
-    return to_slug(text)
+def cmd_filename(args):
+    """Make safe filename."""
+    text = " ".join(args.text)
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    text = re.sub(r'[^\w\s.\-]', '', text)
+    text = re.sub(r'\s+', '_', text).strip('_')
+    if args.ext:
+        text = f"{text}.{args.ext.lstrip('.')}"
+    print(text)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Convert text to URL-safe slugs")
-    parser.add_argument("text", nargs="?", help="Text to slugify")
-    parser.add_argument("--snake", action="store_true", help="snake_case")
-    parser.add_argument("--camel", action="store_true", help="camelCase")
-    parser.add_argument("--pascal", action="store_true", help="PascalCase")
-    parser.add_argument("--const", action="store_true", help="CONSTANT_CASE")
-    parser.add_argument("--file", action="store_true", help="Filename-safe (preserves extension)")
-    parser.add_argument("--max", type=int, default=0, help="Max length")
-    parser.add_argument("--sep", default="-", help="Separator (default: -)")
-    parser.add_argument("--batch", action="store_true", help="Process stdin line by line")
-    parser.add_argument("--all", action="store_true", help="Show all formats")
-
-    args = parser.parse_args()
-
-    def convert(text: str) -> str:
-        if args.all:
-            return (f"  slug:     {to_slug(text, args.sep, args.max)}\n"
-                    f"  snake:    {to_snake(text)}\n"
-                    f"  camel:    {to_camel(text)}\n"
-                    f"  pascal:   {to_pascal(text)}\n"
-                    f"  const:    {to_const(text)}\n"
-                    f"  filename: {to_filename(text)}")
-        if args.snake: return to_snake(text)
-        if args.camel: return to_camel(text)
-        if args.pascal: return to_pascal(text)
-        if args.const: return to_const(text)
-        if args.file: return to_filename(text)
-        return to_slug(text, args.sep, args.max)
-
-    if args.batch or (not args.text and not sys.stdin.isatty()):
-        for line in sys.stdin:
-            line = line.strip()
-            if line:
-                print(convert(line))
-        return 0
-
-    if not args.text:
-        parser.print_help()
-        return 1
-
-    print(convert(args.text))
-    return 0
+    p = argparse.ArgumentParser(prog="slugify", description="URL slug generator")
+    sub = p.add_subparsers(dest="cmd")
+    s = sub.add_parser("convert", aliases=["c"], help="Slugify text")
+    s.add_argument("text", nargs="+")
+    s.add_argument("-s", "--separator", default="-")
+    s.add_argument("-k", "--keep-case", action="store_true")
+    s.add_argument("-m", "--max-length", type=int, default=0)
+    s = sub.add_parser("batch", aliases=["b"], help="Batch from stdin")
+    s.add_argument("-s", "--separator", default="-")
+    s = sub.add_parser("filename", aliases=["f"], help="Safe filename")
+    s.add_argument("text", nargs="+")
+    s.add_argument("-e", "--ext")
+    args = p.parse_args()
+    if not args.cmd: p.print_help(); return 1
+    cmds = {"convert": cmd_convert, "c": cmd_convert, "batch": cmd_batch, "b": cmd_batch,
+            "filename": cmd_filename, "f": cmd_filename}
+    return cmds[args.cmd](args) or 0
 
 
 if __name__ == "__main__":
